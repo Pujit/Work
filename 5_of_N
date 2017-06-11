@@ -1,0 +1,191 @@
+This script is used to login the remote server,create a gpg encrypted file in the source dir from the dump files in the source dir.
+Then encrypt it to the .gpg format.
+#!/bin/ksh
+##############################################################################
+# Script Name: dp_dmp_file_scp_pp6628.sh
+# 
+#
+# Input parameters:(in our case the input will be and the path of the local server P1 tier p2 format of file  
+#and  p3 local destinition)
+#          $1 = Source directory path //local server path
+#          $2 = Data move file group basename. Format: {expdp}_{tirename}_MinDate_TO_maxdate_*.dmp
+#          
+#
+#Sample call:                              P1										                                           	P2													
+#	./dp_dmp_file_scp_pp6628.ksh   GMDC_EPC5_PREPROD_4NODE_tracker_20170401_to_201704015_inclusive_*.dmp			preprod			
+#   
+#    ./dp_dmp_file_scp.ksh    /oemexport/GM/ 					 GM_CEPC_TARGET_AMT9_GMPUBI4_GRP_5_20150903_0933				psic
+#
+
+#
+############################################
+# step 1 syntax check of input params
+############################################
+v_now=$(date '+%Y%m%d_%H%M%S')
+echo "in dp_dmp_file_scp.sh time is $v_now  osuser is `whoami`   OS_PID=$$"
+tm_start=$SECONDS
+
+# Name of this script file, without path.
+script_file=${0##*/}
+# Path to this script. Other scripts are there also. Full path is retrieved then dissected to get clean path.
+script_path=$(whence $0) # whence returns full path and may include '.' or '..' if this script called using a relative path.
+
+# If script_path has one or more '/./' in it, remove the '.' notation.
+while [[ -z ${script_path##*/./*} ]]; do               # ${script_path##*/./*} is null if script_path contains a '/./'
+  script_path=${script_path%/./*}/${script_path##*/./} # Remove the last "/./"
+done
+# If one or more ".." relative paths were used to call this script, remove them from script_path.
+while [[ -z ${script_path##*/../*} ]]; do       # There is a ".." in the path.
+  front_path=${script_path%%/../*}              # The path up to the first "..".
+  front_path=${front_path%/*}                   # The front_path with the lowest level directory removed.
+  # The path to the script file with the "next upper" level directory removed.
+  script_path=${front_path}/${script_path#*/../} # Combine $front_path with everything after the first "..".
+done
+
+script_path=${script_path%/*}  # Remove the script file name and last / of the path.
+
+
+# Test whether all paramters were specified.
+if [ "$1"   == "" ]; then  echo "$(date '+%Y%m%d_%H%M%S') ERROR:Param p1 (Dmp file base name)      is blank/missing";    exit 1;    fi
+if [ "$2"   == "" ]; then  echo "$(date '+%Y%m%d_%H%M%S') ERROR:Param p3 (tier) is blank/missing"; exit 1;    fi
+
+
+eval p1=$1
+     p2="`echo $2 | tr '[a-z]' '[A-Z]'`"  #make input param uppercase
+
+
+echo "params:"
+echo "      p1=[${p1}]"
+echo "      p2=[${p2}]"
+
+
+# Define descriptively named variables for positional parameters.
+#source_dir=${p1%/}      # Strip off ending / if it exists.
+source_file_basename=$p1
+echo "First"
+
+# Set up basic opr,scp,ssh access by sourcing aliases and env variables.
+dm_global_variables=${script_path}/dm_global_variables.sh
+
+
+#checks if the file  dm_global_variables is present in the given path
+if  [ -f   ${dm_global_variables} ]
+then
+    . ${dm_global_variables}
+else
+    echo "FATAL_ERROR: file [${dm_global_variables}] does NOT exist"
+    exit 1
+fi
+. ${dm_global_variables}
+echo "PREPROD_DM_Oracle_Directory : [$PREPROD_DM_Oracle_Directory]"
+
+
+# Determine the SBS environment tier and set variable values.
+if ( [ "${p2}"  != "PSIC" ] && [ "${p2}"  != "PREPROD" ] && [ "${p2}"  != "PROD" ] ) || [ "${p2}"  == "" ]
+then
+    echo "ERROR: param p2 is requred to be one of [PSIC|PREPROD|PROD]"
+    echo "       p2=[$p2]"
+    exit 1
+else
+   
+
+   v_gmdc_tier=${p2}
+     if [ "${v_gmdc_tier}" = "PROD" ] && [ "`hostname | egrep 'pv|prd' | wc -l | sed -e 's/^ *//g;s/ *$//g'`" != 1 ]
+     then
+           echo "ERROR: you must run on a PROD server to specify a PROD target tier"
+           exit 1
+     fi
+     # call dm_global_variables again only this time specify v_gmdc_tier so tier specific values populate the generic vars
+     . ${dm_global_variables}  ${v_gmdc_tier}
+     #Source_Server_address=${DM_Dspoepc_server}
+
+fi
+
+		
+
+if [ "${DM_Oracle_Directory_folder}"  != "" ]
+then # this is the typical case we will scp our files directly onto this GMDC tier via
+# we can sure that the source folder is there and we can move ahead.If this folder is not there  abort
+      
+      Source_Server_location=$DM_Dspoepc_server
+      Source_dir_location=$DM_Oracle_Directory_folder
+	  
+	  echo "Source_Server_location=[{$Source_Server_location}]"
+	  echo "Source_dir_location=[${DM_Oracle_Directory_folder}]"
+      if  [ "${Source_Server_location}"  = "" ] || [ "${Source_dir_location}"  = "" ]
+      then
+         echo "one or more required variables is empty probably an issue with dotin file dp_global_variables"
+         echo "var Source_server_location...............[${Source_Server_location}]"
+         echo "var Source_dir_location...........[${Source_dir_location}]"
+         exit 1
+    fi
+fi	
+
+     # to reach here then according to our "dotin" of "dp_global_variables" this tier
+     # does NOT have a NAS folder which is mapped to an ORACLE directory. (This is probably PSIC).
+     # as such we need to scp our files to some other GMDC server (probably PREprod)
+     # and then "slide" those files onto intended tier.
+     #
+#################################################
+# step 2 syntax check/validity of source files
+#################################################
+# Test the source directory to verify it exists.
+if ! ssh ${Source_Server_location} test -w ${Source_dir_location}; then
+    echo "$(date '+%Y%m%d_%H%M%S') ${script_file}: Destination directory ${Source_dir_location} does not exist or is not writable on remote server ${Source_Server_location}."
+    echo "$(date '+%Y%m%d_%H%M%S') ${script_file}: Terminating script with error status."
+    exit 1
+fi
+
+echo "Source_Server_location=[${Source_Server_location}]"
+echo " and   Source_dir_location=  [$Source_dir_location]"
+echo " source_file_basename= [${source_file_basename}]"
+#echo "`ssh ${Source_location} gzip ${Source_dir_location}/${source_file_basename}`"  
+##ssh $gmdc_epc5_PREprod ls  /data/spoepc_dataload/gm_data_pump/expdp_Preprod_20160418_TO_20160418_inclusive6628.* 
+##ssh Dspoepc@130.172.152.107 ls  /data/spoepc_dataload/gm_data_pump/expdp_Preprod_20160418_TO_20160418_inclusive6628.*
+
+
+########## added fom here to test Begin
+v_format="GMDC_EPC5_PREPROD_4NODE_tracker_20170401_to_201704015_inclusive_*"
+
+for files in `ssh $Source_Server_location "ls $Source_dir_location| grep $v_format"`;do
+echo "after ssh"
+
+
+
+#check if the file is listed by the above command
+if [ $files == "" ]; then
+  echo "there is no file in the destinition folder."
+  fi
+	#The above ls command can give the files that matches .dmp,.dmp.gpg, .dmp.xxx etc
+  # to make sure that the file that needs to be encrypted should have .dmp ext. We do not take the file if it has .dmp.xxx extention
+  #all we need is only .dmp files extension at the last
+filename=$(basename "$files")
+extension="${filename##*.}"
+#echo "extension=[${extension}]"
+filename="${filename%.*}"
+echo "extension=${extension}"
+   if [ $extension != 'dmp' ]; then
+	echo " ERROR: the file is not dmp file. So not creating the encryption"
+     else
+ echo "Greating the .gpg file in the GMDC environment for  $files " 
+#`ssh Dspoepc@130.172.152.107 "/data/spoepc_dataload/scripts/encrypt_tracker_key.sh  /data/spoepc_dataload/gm_data_pump/$files gmdc_epc5_PREprod1"`
+`ssh $Source_Server_location "/data/spoepc_dataload/scripts/encrypt_tracker_key.sh  $Source_dir_location/$files gmdc_epc5_PREprod1"`
+echo "Encryption Success"
+  fi
+echo ""
+#moving file from GMDC to richfield
+#scp -p $Source_Server_location:/data/spoepc_dataload/gm_data_pump/$files.gpg   /A/GM/GM-Tracker/wip/
+done
+rtncd=$?
+echo rtncd=[$rtncd]
+    if [ ${rtncd} != 0 ]
+    then
+        echo " Encryption not succssful "
+        echo "ERROR: aborting script."
+        echo rtncd=[$rtncd]
+        exit 1
+     fi
+
+
+
+########## The end
