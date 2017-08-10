@@ -1,0 +1,116 @@
+How to get distinct records from a table without distinct keyword.
+1. Using group by clause:
+***************************************************************************************
+SELECT job
+        ,deptno
+    FROM emp
+GROUP BY job
+        ,deptno
+ORDER BY job
+        ,deptno ;
+        
+   2:Using Unique keyword:
+ ***********************************************************************************  
+   SELECT UNIQUE
+         job
+        ,deptno
+    FROM emp
+ORDER BY job
+        ,deptno ;
+        
+ 3:Using Minus set operator
+ ***********************************************************************************
+ SELECT job
+      ,deptno
+  FROM emp
+ MINUS
+SELECT NULL
+      ,NULL
+  FROM DUAL ;
+  
+  4: Union set operator
+ ***********************************************************************************
+  SELECT job
+      ,deptno
+  FROM emp
+ UNION
+SELECT NULL
+      ,NULL
+  FROM DUAL
+ WHERE 1 = 2 ;
+ ***********************************************************************************
+ 5: Intersect operator
+ SELECT job
+      ,deptno
+  FROM emp
+INTERSECT
+SELECT job
+      ,deptno
+  FROM emp ;
+***********************************************************************************  
+  6: Row_number 
+  Analytical function
+  SELECT job
+      ,deptno
+  FROM ( SELECT job
+               ,deptno
+               ,ROW_NUMBER() OVER (PARTITION BY job,deptno ORDER BY 1) row_num
+           FROM emp
+       )
+ WHERE row_num = 1 ;
+ ***********************************************************************************
+ 7:Rank Or dense:
+ 
+ SELECT job
+       ,deptno
+   FROM ( SELECT job
+                ,deptno
+                 --We can use DENSE_RANK also instead of RANK function here.
+                ,RANK() OVER (PARTITION BY job,deptno ORDER BY ROWNUM ) row_num
+            FROM emp
+        )
+ WHERE row_num = 1 ;
+ 
+ 8:subquery
+ ***********************************************************************************
+ SELECT job
+        ,deptno
+    FROM emp a
+   WHERE a.ROWID >= ALL ( SELECT b.ROWID
+                            FROM emp       b
+                           WHERE a.job     = b.job
+                             AND a.deptno  = b.deptno
+                        )
+ORDER BY job
+        ,deptno ;
+        
+        8: Aggregate function
+ ***********************************************************************************       
+         SELECT job
+        ,deptno
+    FROM emp a
+   WHERE ROWID = ( SELECT MIN(ROWID) -- You can use MAX function also instead of MIN
+                     FROM EMP       b
+                    WHERE b.job     = a.job
+                      AND b.deptno  = a.deptno
+                 )
+ORDER BY job
+        ,deptno ;
+        
+        
+        9:Exists query:
+     ***********************************************************************************   
+         SELECT job
+        ,deptno
+    FROM emp a
+   WHERE ROWID = ( SELECT MIN(ROWID) -- You can use MAX function also instead of MIN
+                     FROM EMP       b
+                    WHERE b.job     = a.job
+                      AND b.deptno  = a.deptno
+                 )
+ORDER BY job
+        ,deptno ;
+        
+     
+ 
+ 
